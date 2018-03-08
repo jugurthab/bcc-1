@@ -1,4 +1,6 @@
 name: bcc
+channels:
+ - conda-forge
 dependencies:
  - python >= 3.5
  - numpy
@@ -10,6 +12,7 @@ dependencies:
  - pyyaml
  - cryptography
  - traitlets
+ - traittypes
  - pip:
    - hypothesis
    - pytest-sugar

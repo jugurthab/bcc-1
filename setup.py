@@ -14,6 +14,7 @@ with open('HISTORY.rst') as history_file:
 requirements = [
     'numpy',
     'traitlets',
+    'traittypes',
 ]
 
 setup_requirements = ['pytest-runner', ]
@@ -22,6 +23,7 @@ test_requirements = [
     'pytest',
     'numpy',
     'traitlets',
+    'traittypes',
 ]
 
 setup(
