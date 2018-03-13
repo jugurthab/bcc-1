@@ -32,88 +32,124 @@ class PositiveFloat(tl.Float):
 
 
 class BCC(tl.HasTraits):
+    """BCC lattice maps voronoi cells to bin ids
+        DOES THE GEOMETRIC WINDOW DEFINE THE GRID, OR
+                 1:N contiguous
+        option 1: all idx in range(0, len(binner)) valid
+        option 2: all points in [lower, upper] have valid indices
+        ARE THESE MUTUALLY EXCLUSIVE????
+    """
     ndim = PositiveInt()
-    sizes = tt.Array(dtype='i8')
+    sizes = tt.Array(dtype='u8')  # (upper-lower)/width
+    nside = tt.Array(dtype='u8')  # 1 + sizes + 1 (for boundary)
     lower = tt.Array(dtype='f8')
     upper = tt.Array(dtype='f8')
     width = tt.Array(dtype='f8')
 
-    @tl.default('ndim')
-    def _default_ndim(self):
-        if len(self.sizes.shape) is not 1 or self.sizes.shape[0] < 3:
-            raise tl.TraitError('sizes must have shape (ndim>=3,)')
-        return self.sizes.shape[0]
-
-    @tl.default('sizes')
-    def _default_sizes(self):
-        raise tl.TraitError('sizes must be specified')
-
-    @tl.default('lower')
-    def _default_lower(self):
-        return np.zeros((self.ndim,))
-
-    @tl.default('upper')
-    def _default_upper(self):
-        return np.ones((self.ndim,))
-
-    @tl.default('width')
-    def _default_width(self):
-        return (self.upper - self.lower) / self.sizes
-
-    @tl.validate('lower')
-    def _validate_lower(self, proposal):
-        print('_validate_lower:', proposal)
-        lower = proposal['value']
-        if (self.sizes.shape != lower.shape):
-            err = 'sizes and lower must have same shape. '
-            err += 'sizes.shape: %s, lower.shape: %s' % (
-                self.sizes.shape, lower.shape)
-            raise tl.TraitError(err)
-        return lower
-
-    @tl.validate('upper')
-    def _validate_upper(self, proposal):
-        upper = proposal['value']
-        if (self.sizes.shape != upper.shape):
-            err = 'sizes and upper must have same shape. '
-            err += 'sizes.shape: %s, upper.shape: %s' % (
-                self.sizes.shape, upper.shape)
-            raise tl.TraitError(err)
-        return upper
-
-    def __len__(self):
-        return np.prod(self.sizes) * 2
-
-    def get_bin_indices(self, value):
-        value = np.asarray(value)
-        tmp = value.copy()
-        tmp -= self.lower
-        tmp /= self.width
-        indices = tmp.astype('i8')
-        tmp -= indices + 0.5
-        corner_indices = indices - (tmp < 0)
-        odd = 0.25 * self.ndim < np.sum(np.sign(tmp) * tmp, axis=-1)
-        indices = np.where(odd[..., np.newaxis], corner_indices, indices)
-        return indices, odd
-
-    def sizes_prod(self):
-        sizes_prod = np.ones(self.ndim, dtype='i8')
-        sizes_prod[1:] = np.cumprod(self.sizes[:-1])
-        return sizes_prod
-
     def get_bin_index(self, value):
-        indices, odd = self.get_bin_indices(value)
-        index = np.sum(self.sizes_prod() * indices, axis=-1)
-        return np.left_shift(index, 1) + odd
-
-    def get_bin_center_from_indices(self, indices, odd):
-        cen = (self.lower + self.width / 2 + self.width * indices
-               + np.where(odd[..., np.newaxis], self.width / 2.0, 0.0))
-        return cen
+        indices, parity = self._get_bin_indices(value)
+        indices += 1
+        index = np.sum(self._nside_prod() * indices, axis=-1)
+        return np.left_shift(index, 1) + parity
 
     def get_bin_center(self, index):
         index = np.asarray(index, dtype='i8')
-        odd = np.bitwise_and(index, 1)
+        parity = np.bitwise_and(index, 1)
         indices = np.mod(np.right_shift(index, 1)[..., np.newaxis] //
-                         self.sizes_prod(), self.sizes)
-        return self.get_bin_center_from_indices(indices, odd)
+                         self._nside_prod(), self.nside)
+        indices -= 1
+        return self._get_bin_center_from_indices(indices, parity)
+
+    def __len__(self):
+        return np.prod(self.nside)
+
+    if 1:  # 'HIDDEN METHODS'
+
+        def _get_bin_indices(self, value):
+            value = np.asarray(value)
+            tmp = value.copy()
+            tmp -= self.lower
+            tmp /= self.width
+            indices = tmp.astype('i8')
+            tmp -= indices + 0.5
+            corner_indices = indices - (tmp < 0)
+            parity = 0.25 * self.ndim < np.sum(np.sign(tmp) * tmp, axis=-1)
+            indices = np.where(parity[..., np.newaxis],
+                               corner_indices, indices)
+            return indices, parity
+
+        def _nside_prod(self):
+            _nside_prod = np.ones(self.ndim, dtype='i8')
+            _nside_prod[1:] = np.cumprod(self.nside[:-1])
+            return _nside_prod
+
+        def _get_bin_center_from_indices(self, indices, parity):
+            cen = (self.lower + self.width / 2 + self.width * indices
+                   + np.where(parity[..., np.newaxis], self.width / 2.0, 0.0))
+            return cen
+
+        @tl.default('ndim')
+        def _default_ndim(self):
+            if len(self.sizes.shape) is not 1 or self.sizes.shape[0] < 3:
+                raise tl.TraitError('sizes must have shape (ndim>=3,)')
+            return self.sizes.shape[0]
+
+        @tl.default('sizes')
+        def _default_sizes(self):
+            raise tl.TraitError('sizes must be specified')
+
+        @tl.default('lower')
+        def _default_lower(self):
+            return np.zeros((self.ndim,))
+
+        @tl.default('upper')
+        def _default_upper(self):
+            return np.ones((self.ndim,))
+
+        @tl.default('width')
+        def _default_width(self):
+            return (self.upper - self.lower) / self.sizes
+
+        @tl.default('nside')
+        def _default_nside(self):
+            return self.sizes + 2
+
+        @tl.validate('sizes')
+        def _validate_sizes(self, proposal):
+            return proposal['value']
+
+        @tl.validate('nside')
+        def _validate_nside(self, proposal):
+            if not np.all(proposal['value'] == self.sizes + 2):
+                raise tl.TraitError('bad nside, should be sizes + 2')
+            return proposal['value']
+
+        @tl.validate('lower')
+        def _validate_lower(self, proposal):
+            lower = proposal['value']
+            if (self.sizes.shape != lower.shape):
+                err = 'sizes and lower must have same shape. '
+                err += 'sizes.shape: %s, lower.shape: %s' % (
+                    self.sizes.shape, lower.shape)
+                raise tl.TraitError(err)
+            with self.hold_trait_notifications():
+                if np.any(lower >= self.upper):
+                    raise tl.TraitError('lower >= upper!')
+            return lower
+
+        @tl.validate('upper')
+        def _validate_upper(self, proposal):
+            upper = proposal['value']
+            if (self.sizes.shape != upper.shape):
+                err = 'sizes and upper must have same shape. '
+                err += 'sizes.shape: %s, upper.shape: %s' % (
+                    self.sizes.shape, upper.shape)
+                raise tl.TraitError(err)
+            with self.hold_trait_notifications():
+                if np.any(self.lower >= upper):
+                    raise tl.TraitError('lower >= upper!')
+            return upper
+
+
+class _Cubic:
+    pass

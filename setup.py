@@ -24,6 +24,7 @@ test_requirements = [
     'numpy',
     'traitlets',
     'traittypes',
+    'hypothesis',
 ]
 
 setup(

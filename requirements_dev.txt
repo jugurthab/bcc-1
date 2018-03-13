@@ -8,6 +8,7 @@ coverage
 Sphinx
 pytest
 pytest-runner
+hypothesis
 numpy
 traitlets
 traittypes
