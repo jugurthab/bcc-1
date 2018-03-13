@@ -16,7 +16,6 @@ dependencies:
  - pip:
    - hypothesis
    - pytest-sugar
-   - pytest-xdist
    - bumpversion
    - tox
    - wheel
