@@ -1,14 +1,87 @@
 # -*- coding: utf-8 -*-
-
 """Main module."""
 
 import numpy as np
 import traitlets as tl
 import traittypes as tt
 
+try:
+    import numba
+    from numba.types import float64, float32
+    jit = numba.njit(nogil=True, fastmath=True)
+
+    def guvec(sigs, layout, func):
+        return numba.guvectorize(
+            sigs, layout, nopython=1, fastmath=1)(func)  # nogil not supported
+
+except ImportError:
+    import numpy
+    import pytest
+    float64 = float32 = numpy.empty((1, 1, 1, 1, 1, 1, 1))
+    jit = lambda f: None
+
+    def guvec(sigs, layout, func):
+        return None
+
+
+# numba closure-based versions
+
+
+@jit
+def _numba_get_bin_indices(value, ndim, lower, width):
+    tmp = value.copy()
+    tmp -= lower
+    tmp /= width
+    indices = tmp.astype(np.int64)
+    tmp -= indices + 0.5
+    corner_indices = indices - (tmp < 0)
+    parity = 0.25 * ndim < np.sum(np.sign(tmp) * tmp)
+    indices = corner_indices if parity else indices
+    return indices, parity
+
+
+def _kernel_bcc_indexer(sizes, lower, upper):
+    sizes = np.asarray(sizes)
+    lower = np.asarray(lower)
+    upper = np.asarray(upper)
+    ndim = len(sizes)
+    width = (upper - lower) / sizes
+    sizes = sizes + 2
+
+    @jit
+    def func(value, res):
+        assert value.ndim == 1
+        indices, parity = _numba_get_bin_indices(value, ndim, lower, width)
+        indices += 1
+        nside_prod = np.ones(ndim, dtype=np.int64)
+        nside_prod[1:] = np.cumprod(sizes[:-1])
+        index = np.sum(nside_prod * indices)
+        res[0] = np.left_shift(index, 1) + parity
+
+    return func
+
+
+def gu_bcc_indexer(*args, **kw):
+    func = _kernel_bcc_indexer(*args, **kw)
+    return guvec([(float64[:], float64[:])], '(n)->()', func)
+
+
+def numba_bcc_indexer(*args, **kw):
+    func0 = _kernel_bcc_indexer(*args, **kw)
+
+    @jit
+    def func(value):
+        res = np.empty(1, dtype=np.int64)
+        func0(value, res)
+        return res[0]
+
+    return func
+
+
+##################### crappy Traitlets stuff #####################
+
 
 class PositiveInt(tl.Int):
-
     def info(self):
         return u'a positive integer'
 
@@ -20,7 +93,6 @@ class PositiveInt(tl.Int):
 
 
 class PositiveFloat(tl.Float):
-
     def info(self):
         return u'a positive float'
 
@@ -55,8 +127,9 @@ class BCC(tl.HasTraits):
     def get_bin_center(self, index):
         index = np.asarray(index, dtype='i8')
         parity = np.bitwise_and(index, 1)
-        indices = np.mod(np.right_shift(index, 1)[..., np.newaxis] //
-                         self._nside_prod(), self.nside)
+        indices = np.mod(
+            np.right_shift(index, 1)[..., np.newaxis] // self._nside_prod(),
+            self.nside)
         indices -= 1
         return self._get_bin_center_from_indices(indices, parity)
 
@@ -74,8 +147,8 @@ class BCC(tl.HasTraits):
             tmp -= indices + 0.5
             corner_indices = indices - (tmp < 0)
             parity = 0.25 * self.ndim < np.sum(np.sign(tmp) * tmp, axis=-1)
-            indices = np.where(parity[..., np.newaxis],
-                               corner_indices, indices)
+            indices = np.where(parity[..., np.newaxis], corner_indices,
+                               indices)
             return indices, parity
 
         def _nside_prod(self):
@@ -84,8 +157,8 @@ class BCC(tl.HasTraits):
             return _nside_prod
 
         def _get_bin_center_from_indices(self, indices, parity):
-            cen = (self.lower + self.width / 2 + self.width * indices
-                   + np.where(parity[..., np.newaxis], self.width / 2.0, 0.0))
+            cen = (self.lower + self.width / 2 + self.width * indices +
+                   np.where(parity[..., np.newaxis], self.width / 2.0, 0.0))
             return cen
 
         @tl.default('ndim')
@@ -100,11 +173,11 @@ class BCC(tl.HasTraits):
 
         @tl.default('lower')
         def _default_lower(self):
-            return np.zeros((self.ndim,))
+            return np.zeros((self.ndim, ))
 
         @tl.default('upper')
         def _default_upper(self):
-            return np.ones((self.ndim,))
+            return np.ones((self.ndim, ))
 
         @tl.default('width')
         def _default_width(self):
@@ -129,8 +202,8 @@ class BCC(tl.HasTraits):
             lower = proposal['value']
             if (self.sizes.shape != lower.shape):
                 err = 'sizes and lower must have same shape. '
-                err += 'sizes.shape: %s, lower.shape: %s' % (
-                    self.sizes.shape, lower.shape)
+                err += 'sizes.shape: %s, lower.shape: %s' % (self.sizes.shape,
+                                                             lower.shape)
                 raise tl.TraitError(err)
             with self.hold_trait_notifications():
                 if np.any(lower >= self.upper):
@@ -142,8 +215,8 @@ class BCC(tl.HasTraits):
             upper = proposal['value']
             if (self.sizes.shape != upper.shape):
                 err = 'sizes and upper must have same shape. '
-                err += 'sizes.shape: %s, upper.shape: %s' % (
-                    self.sizes.shape, upper.shape)
+                err += 'sizes.shape: %s, upper.shape: %s' % (self.sizes.shape,
+                                                             upper.shape)
                 raise tl.TraitError(err)
             with self.hold_trait_notifications():
                 if np.any(self.lower >= upper):
