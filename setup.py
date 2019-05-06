@@ -4,6 +4,7 @@
 """The setup script."""
 
 from setuptools import setup, find_packages
+import sys
 
 with open('README.rst') as readme_file:
     readme = readme_file.read()
@@ -17,7 +18,8 @@ requirements = [
     'traittypes',
 ]
 
-setup_requirements = ['pytest-runner', ]
+needs_pytest = set(['pytest', 'test', 'ptr']).intersection(sys.argv)
+pytest_runner = ['pytest-runner'] if needs_pytest else []
 
 test_requirements = [
     'pytest',
@@ -46,7 +48,7 @@ setup(
     keywords='bcc',
     name='bcc',
     packages=find_packages(include=['bcc']),
-    setup_requires=setup_requirements,
+    setup_requires=pytest_runner,
     test_suite='tests',
     tests_require=test_requirements,
     url='https://github.com/willsheffler/bcc',
